@@ -1,0 +1,482 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  passwordHash     String
+  name             String
+  avatarUrl        String?
+  roleId           String
+  role             Role      @relation(fields: [roleId], references: [id])
+  accountState     String    @default("ACTIVE") // PENDING_VERIFICATION, ACTIVE, SUSPENDED, LOCKED, DISABLED, DELETED
+  emailVerified    Boolean   @default(false)
+  emailVerifiedAt  DateTime?
+  mfaEnabled       Boolean   @default(false)
+  mfaSecret        String?
+  backupCodes      String?   // JSON array of encrypted/hashed recovery codes
+  autonomyLevel    String    @default("ASK_BEFORE_ACTING") // ASK_BEFORE_ACTING, ALLOW_LOW_RISK, ADVANCED_AUTOMATION
+  pauseMemory      Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  sessions         Session[]
+  authEvents       AuthEvent[]
+  verifyTokens     EmailVerificationToken[]
+  resetTokens      PasswordResetToken[]
+  conversations    Conversation[]
+  tasks            Task[]
+  memories         Memory[]
+  files            File[]
+  approvals        Approval[]
+  activityEvents   ActivityEvent[]
+  integrations     Integration[]
+  toolExecutions   ToolExecution[]
+  projects         Project[]
+  constitutionRules ConstitutionRule[]
+  artifacts        Artifact[]
+  dataProfiles     DataProfile[]
+  factLedgers      FactLedger[]
+  workflows        Workflow[]
+  workflowRuns     WorkflowRun[]
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  name        String           @unique // USER, ADMIN, AUDITOR, DEVELOPER, SUPER_ADMIN
+  description String
+  createdAt   DateTime         @default(now())
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  description String
+  resource    String
+  action      String
+  createdAt   DateTime         @default(now())
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model Session {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token       String    @unique
+  deviceInfo  String
+  ipAddress   String
+  lastActiveAt DateTime @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model AuthEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email     String
+  eventType String   // LOGIN_SUCCESS, LOGIN_FAILURE, LOGOUT, PASSWORD_RESET, MFA_VERIFIED, ACCOUNT_LOCKED, SESSION_REVOKED
+  ipAddress String
+  userAgent String
+  metadata  String?  // JSON string
+  createdAt DateTime @default(now())
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  pinned    Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String       // user, assistant, system, tool
+  content        String
+  metadata       String?      // JSON string (citations, tool calls, reasoning summary, verification status)
+  createdAt      DateTime     @default(now())
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  status      String    @default("ACTIVE") // ACTIVE, ARCHIVED, COMPLETED
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tasks       Task[]
+  memories    Memory[]
+  files       File[]
+  artifacts   Artifact[]
+  workflows   Workflow[]
+}
+
+model Task {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId     String?
+  project       Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title         String
+  description   String?
+  status        String          @default("CREATED") // CREATED, PLANNING, EXECUTING, WAITING_FOR_APPROVAL, WAITING_FOR_TOOL, VERIFYING, COMPLETED, FAILED, PAUSED, CANCELLED
+  agentType     String          @default("Planner") // Planner, Research, Coding, File, Data, Memory, Verification, Judge
+  riskLevel     String          @default("LOW")     // LOW, MEDIUM, HIGH, CRITICAL
+  progress      Int             @default(0)
+  currentStep   String?
+  resultSummary String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  steps         TaskStep[]
+  approvals     Approval[]
+  executions    ToolExecution[]
+  actionContract ActionContract?
+  decisionLedger DecisionLedger?
+  artifacts      Artifact[]
+  dataProfiles   DataProfile[]
+  factLedgers    FactLedger[]
+}
+
+model TaskStep {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stepNumber  Int
+  title       String
+  description String?
+  status      String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
+  agent       String
+  toolName    String?
+  startedAt   DateTime?
+  completedAt DateTime?
+}
+
+model Memory {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId       String?
+  project         Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  type            String    // SHORT_TERM, LONG_TERM, PROJECT, PREFERENCE, FACT, TASK, SEMANTIC, EPISODIC, TEMPORAL
+  content         String
+  source          String    // e.g. "User Statement", "Web Research", "PDF Analysis", "Code Review"
+  confidence      Float     @default(1.0)
+  lastConfirmedAt DateTime?
+  isArchived      Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model File {
+  id         String      @id @default(cuid())
+  userId     String
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId  String?
+  project    Project?    @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  filename   String
+  fileType   String
+  fileSize   Int
+  filePath   String
+  scanStatus String      @default("CLEAN") // CLEAN, SCANNING, FLAGGED
+  metadata   String?     // JSON
+  createdAt  DateTime    @default(now())
+  chunks     FileChunk[]
+}
+
+model FileChunk {
+  id         String   @id @default(cuid())
+  fileId     String
+  file       File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  chunkIndex Int
+  content    String
+  tokenCount Int
+  embedding  String?  // JSON representation of embedding vector
+}
+
+model Tool {
+  id               String          @id @default(cuid())
+  name             String          @unique // web_search, read_document, execute_code, send_email, db_query, delete_resource
+  category         String          // RESEARCH, FILES, SYSTEM, INTEGRATION, DANGEROUS
+  description      String
+  riskLevel        String          @default("LOW") // LOW, MEDIUM, HIGH, CRITICAL
+  requiresApproval Boolean         @default(false)
+  inputSchema      String          // JSON Schema string
+  outputSchema     String?         // JSON Schema string
+  enabled          Boolean         @default(true)
+  executions       ToolExecution[]
+}
+
+model ToolExecution {
+  id          String   @id @default(cuid())
+  taskId      String?
+  task        Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolId      String
+  tool        Tool     @relation(fields: [toolId], references: [id])
+  inputParams String   // JSON string
+  outputResult String? // JSON string
+  status      String   @default("SUCCESS") // PENDING, EXECUTING, SUCCESS, FAILED, BLOCKED_APPROVAL
+  durationMs  Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model Approval {
+  id          String    @id @default(cuid())
+  taskId      String?
+  task        Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actionName  String
+  reason      String
+  riskLevel   String    // LOW, MEDIUM, HIGH, CRITICAL
+  dataPayload String    // JSON string showing diff, parameters, target
+  status      String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  resolvedAt  DateTime?
+  comment     String?
+  createdAt   DateTime  @default(now())
+}
+
+model ActivityEvent {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String   // TASK_CREATED, RESEARCH_STARTED, TOOL_INVOKED, APPROVAL_REQUESTED, APPROVAL_GRANTED, VERIFICATION_PASSED, MEMORY_RECORDED
+  title       String
+  description String
+  metadata    String?  // JSON string
+  createdAt   DateTime @default(now())
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorUserId  String?
+  actorRole    String
+  targetUserId String?
+  action       String   // LOGIN_SUCCESS, ACCOUNT_SUSPENDED, ROLE_CHANGED, TOOL_EXECUTION, APPROVAL_GRANTED, etc.
+  resource     String
+  resourceId   String?
+  details      String?  // JSON string
+  ipAddress    String
+  status       String   @default("SUCCESS") // SUCCESS, DENIED, FAILED
+  createdAt    DateTime @default(now())
+}
+
+model Integration {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String    // GITHUB, GOOGLE_DRIVE, SLACK, CALENDAR, NOTION, CUSTOM_MCP
+  status      String    @default("CONNECTED") // CONNECTED, DISCONNECTED, ERROR
+  permissions String    // JSON string
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model FeatureFlag {
+  id                String   @id @default(cuid())
+  key               String   @unique
+  name              String
+  description       String
+  enabled           Boolean  @default(true)
+  rolloutPercentage Int      @default(100)
+  createdAt         DateTime @default(now())
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  category    String
+  description String
+  updatedAt   DateTime @updatedAt
+}
+
+model ConstitutionRule {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ruleNumber  Int
+  content     String
+  category    String   @default("SAFETY") // SAFETY, PRIVACY, ACCURACY, AUTONOMY, GENERAL
+  enforced    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ActionContract {
+  id               String   @id @default(cuid())
+  taskId           String   @unique
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  goal             String
+  agents           String   // JSON string array
+  tools            String   // JSON string array
+  allowedActions   String   // JSON string array
+  forbiddenActions String   // JSON string array
+  dataScope        String?  // JSON string array
+  riskLevel        String   @default("LOW")
+  expiresAt        DateTime
+  requiresApproval Boolean  @default(false)
+  createdAt        DateTime @default(now())
+}
+
+model DecisionLedger {
+  id                      String   @id @default(cuid())
+  taskId                  String   @unique
+  task                    Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  goal                    String
+  planSummary             String
+  contextUsed             String?  // JSON string
+  memoriesConsulted       String?  // JSON string
+  toolsInvoked            String?  // JSON string
+  rulesEnforced           String?  // JSON string
+  modelSelectionRationale String?
+  verificationChecklist    String?  // JSON string
+  finalOutcome            String
+  createdAt               DateTime @default(now())
+}
+
+model Artifact {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId        String?
+  project          Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  taskId           String?
+  task             Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  title            String
+  type             String    // DOCUMENT_DOCX, PRESENTATION_PPTX, SPREADSHEET_XLSX, DOCUMENT_PDF, DATASET_CSV, IMAGE_PNG, DIAGRAM_SVG, CODE_SNIPPET
+  mimeType         String
+  downloadUrl      String
+  fileSize         Int       @default(0)
+  previewData      String?   // Text or preview representation
+  metadata         String?   // JSON details (wordCount, slideCount, sheetCount, rows, cols, prompt, etc.)
+  parentArtifactId String?
+  parentArtifact   Artifact? @relation("ArtifactLineage", fields: [parentArtifactId], references: [id], onDelete: SetNull)
+  childArtifacts   Artifact[] @relation("ArtifactLineage")
+  verifiedStatus   String    @default("VERIFIED") // VERIFIED, UNVERIFIED, FLAGGED
+  integrityHash    String    // SHA-256 integrity checksum
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model DataProfile {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId           String?
+  task             Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  datasetName      String
+  rowCount         Int
+  columnCount      Int
+  qualityScore     Float    @default(100.0)
+  qualityGrade     String   @default("A+") // A+, A, B, C, F
+  completenessPct  Float    @default(100.0)
+  duplicateCount   Int      @default(0)
+  anomalyCount     Int      @default(0)
+  schemaProfile    String   // JSON string of columns and statistical metrics
+  recommendations  String?  // JSON string array of data hygiene actions
+  createdAt        DateTime @default(now())
+}
+
+model FactLedger {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId            String?
+  task              Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  topic             String
+  summary           String
+  claims            String   // JSON string array of Claim objects
+  groundingScore    Float    @default(98.5)
+  hallucinationRisk String   @default("LOW") // LOW, MEDIUM, HIGH
+  citationDensity   Float    @default(1.0)
+  sourceCount       Int      @default(1)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model Workflow {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId     String?
+  project       Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  name          String
+  description   String?
+  status        String        @default("ACTIVE") // ACTIVE, DRAFT, PAUSED, ARCHIVED
+  triggerType   String        @default("MANUAL") // MANUAL, SCHEDULE, WEBHOOK, EVENT
+  scheduleCron  String?       // e.g. "0 9 * * 1"
+  nodes         String        // JSON string of WorkflowNode[]
+  edges         String        // JSON string of WorkflowEdge[]
+  lastRunAt     DateTime?
+  lastRunStatus String?       // SUCCESS, FAILED, RUNNING
+  runsCount     Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  runs          WorkflowRun[]
+}
+
+model WorkflowRun {
+  id                 String    @id @default(cuid())
+  workflowId         String
+  workflow           Workflow  @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status             String    @default("RUNNING") // RUNNING, COMPLETED, FAILED, WAITING_APPROVAL
+  trigger            String    // MANUAL, SCHEDULED, EVENT
+  stepResults        String    // JSON string of step execution results
+  durationMs         Int       @default(0)
+  artifactsGenerated String?   // JSON string of artifact IDs
+  errorMessage       String?
+  createdAt          DateTime  @default(now())
+  completedAt        DateTime?
+}
+
